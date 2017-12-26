@@ -11,7 +11,7 @@ import AssetsLibrary
 import Photos
 import AVFoundation
 
-class KiQRCodeViewController: UIViewController ,AVCaptureMetadataOutputObjectsDelegate{
+class KiQRCodeViewController: UIViewController ,AVCaptureMetadataOutputObjectsDelegate,UIImagePickerControllerDelegate,UINavigationControllerDelegate{
 //MARK: - Public
     public lazy var tipTitle: UILabel = { //扫码区域下方提示文字
         let tipTitle = UILabel()
@@ -55,9 +55,9 @@ class KiQRCodeViewController: UIViewController ,AVCaptureMetadataOutputObjectsDe
     /// - Parameters:
     ///   - image: UIImage对象
     ///   - finish: 识别结果
-    class func recognizeQrCodeImage(image:UIImage,finish:@escaping (_ result:String)->Void) {
-        if UIDevice.current.systemVersion < "8.0" {
-            print("只支持iOS8.0以上系统")
+   class func recognizeQrCodeImage(image:UIImage,finish:@escaping (_ result:String)->Void) {
+        if UIDevice.current.systemVersion.compare("8.0").rawValue == 1 {
+            finish("只支持iOS8.0以上系统")
         }else{
             let context = CIContext.init(options: nil)
             let detector = CIDetector(ofType: CIDetectorTypeQRCode, context: context, options: [CIDetectorAccuracy:CIDetectorAccuracyHigh])
@@ -67,9 +67,8 @@ class KiQRCodeViewController: UIViewController ,AVCaptureMetadataOutputObjectsDe
                 let scanResult = feature.messageString
                 finish(scanResult ?? "")
             }else{
-                print("未识别到二维码")
+                finish("未识别到二维码")
             }
-            
         }
     }
     
@@ -175,11 +174,15 @@ class KiQRCodeViewController: UIViewController ,AVCaptureMetadataOutputObjectsDe
         self.view.backgroundColor = .black
         
         appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
-    
-        initScanDevide() //获取设备摄像头权限
-        drawTitle()
-        drawScanView() //绘制扫描区域
-        initScanType()
+        
+        if isAvailableCamera() == false {
+            showSheet(vc: self, title: "无法获取相机权限", message: "是否从相册中获取图片")
+        }else{
+            initScanDevide() //获取设备摄像头权限
+            drawTitle()
+            drawScanView() //绘制扫描区域
+            initScanType()
+        }
         setNavItem(type: self.scanType!)
         // Do any additional setup after loading the view.
     }
@@ -225,7 +228,12 @@ class KiQRCodeViewController: UIViewController ,AVCaptureMetadataOutputObjectsDe
     }
     //打开相册
     @objc private func openPhoto() {
-        
+        if isAvailablePhoto() == false {
+            let tipMessage = "是否前往手机系统的\n【设置】->【隐私】->【相机】\n对\(appName!)开启相机的访问权限"
+            showSheet(vc: self, title: "", message: tipMessage)
+        }else{
+            openPhotoLibrary()
+        }
     }
     
     //MARK: - 修改扫码类型 【二维码  || 条形码】
@@ -321,21 +329,7 @@ extension KiQRCodeViewController{
             self.view.layer.insertSublayer(preview!, at: 0)
         }
     }
-    fileprivate func isAvailableCamera() -> Bool{
-        if UIImagePickerController.isSourceTypeAvailable(.camera) {
-            let authorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
-            if authorizationStatus == .restricted || authorizationStatus == .denied{
-                let tipMessage = "请到手机系统的\n【设置】->【隐私】->【相机】\n对\(appName ?? "该app")开启相机的访问权限"
-                print(tipMessage)
-                return false
-            }else{
-                return true
-            }
-        }else{
-            //相机硬件不可用【一般是模拟器】
-           return false
-        }
-    }
+   
     
     fileprivate func drawTitle(){
         self.view.addSubview(self.tipTitle)
@@ -390,12 +384,67 @@ extension KiQRCodeViewController{
     }
 
 }
+extension KiQRCodeViewController {
+    //MARK: - 获取相机相册权限, 读取相册中图片, 获得扫描结果
+    // 相册是否可用
+    fileprivate func isAvailablePhoto() -> Bool {
+        let authorStatus = PHPhotoLibrary.authorizationStatus()
+        if authorStatus == .denied {
+            return false
+        }
+        return true
+    }
+    //相机是否可用
+    fileprivate func isAvailableCamera() -> Bool{
+        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+            let authorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
+            if authorizationStatus == .restricted || authorizationStatus == .denied{
+                return false
+            }else{
+                self.view.isUserInteractionEnabled = true
+                return true
+            }
+        }else{
+            //相机硬件不可用【一般是模拟器】
+            return false
+        }
+    }
+    // 获取相册图片
+    fileprivate func openPhotoLibrary() {
+        let picker = UIImagePickerController()
+        picker.sourceType = .photoLibrary
+        picker.delegate = self
+        self.present(picker, animated: true, completion: nil)
+    }
+    //MARK: - UIImagePickerControllerDelegate
+    func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [String : Any]) {
+        picker.dismiss(animated: true, completion: nil)
+        let image = info[UIImagePickerControllerOriginalImage] as! UIImage
+        KiQRCodeViewController.recognizeQrCodeImage(image: image, finish: {[weak self] (result) in
+            self?.renderUrlStr(url: result)
+        })
+        
+    }
+    
+    fileprivate func showSheet(vc:UIViewController,title:String,message:String) {
+        let action = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        let actionCancle = UIAlertAction(title: "否", style: .cancel, handler: {[weak self] (action) in
+            self?.navigationController?.popViewController(animated: true)
+        })
+        let actionPhone = UIAlertAction(title:"是", style: .default, handler: {[weak self] (action) in
+            self?.openPhoto()
+        })
+        action.addAction(actionCancle)
+        action.addAction(actionPhone)
+        vc.present(action, animated: true, completion: nil)
+    }
+}
 
 extension KiQRCodeViewController{
     //MARK: - AVCaptureMetadataOutputObjectsDelegate
     func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection){
         if metadataObjects.count == 0 {
-            print("图片中未识别到二维码")
+            renderUrlStr(url: "图片中未识别到二维码")
             return
         }
         if metadataObjects.count > 0 {
